@@ -137,6 +137,11 @@ SimulationServer::SimulationServer(
   tsdf_gt_mesh_pub_ = nh_private_.advertise<visualization_msgs::MarkerArray>(
       "tsdf_gt_mesh", 1, true);
 
+  mesh_pub_ = nh_private_.advertise<voxblox_msgs::Mesh>("mesh", 1, true);
+
+  clicked_point_sub_ = nh_.subscribe("clicked_point", 5, &SimulationServer::moveToPoint, this);
+  frame_sub_ = nh_.subscribe("/rpvio_mapper/frame_cloud", 1, &SimulationServer::frameCloudCallback, this);
+
   // Test
   tsdf_test_pub_ = nh_private_.advertise<pcl::PointCloud<pcl::PointXYZI> >(
       "tsdf_test", 1, true);
@@ -293,18 +298,27 @@ void SimulationServer::visualize() {
     return;
   }
 
+  // // Update parameters from here
+  // // world_->setCuboidParameters(5, Point(-2.0, 0.0, 2.0), Point(-1.0, 0.0, 0.0), 5.0/*breadth*/, 0.3/*width*/);
+  // voxblox::Object* obj = world_->getObjectById(5);
+  // obj->setParameters(Point(-2.0, 0.0, 2.0), Point(-1.0, 0.0, 0.0), 5.0/*breadth*/, 0.3/*width*/);
+  // world_->generateSdfFromWorld(truncation_distance_, tsdf_gt_.get());
+  // world_->generateSdfFromWorld(esdf_max_distance_, esdf_gt_.get());
+
   // Create a pointcloud with distance = intensity.
   pcl::PointCloud<pcl::PointXYZI> pointcloud;
   pointcloud.header.frame_id = world_frame_;
   createDistancePointcloudFromTsdfLayerSlice(
       *tsdf_gt_, 2, visualization_slice_level_, &pointcloud);
   // createDistancePointcloudFromTsdfLayer(*tsdf_gt_, &pointcloud);
+  // createSurfaceDistancePointcloudFromTsdfLayer(*tsdf_gt_, 0.5, &pointcloud);
   tsdf_gt_pub_.publish(pointcloud);
 
   pointcloud.clear();
   createDistancePointcloudFromEsdfLayerSlice(
       *esdf_gt_, 2, visualization_slice_level_, &pointcloud);
   // createDistancePointcloudFromEsdfLayer(*esdf_gt_, &pointcloud);
+  // createFreePointcloudFromEsdfLayer(*esdf_gt_, 0.5, &pointcloud);
   esdf_gt_pub_.publish(pointcloud);
 
   pointcloud.clear();
@@ -349,8 +363,62 @@ void SimulationServer::visualize() {
     fillMarkerWithMesh(mesh_test, color_mode, &marker_array.markers[0]);
     marker_array.markers[0].header.frame_id = world_frame_;
     tsdf_test_mesh_pub_.publish(marker_array);
+
+    voxblox_msgs::Mesh mesh_msg;
+    generateVoxbloxMeshMsg(mesh.get(), ColorMode::kLambertColor, &mesh_msg);
+    mesh_msg.header.frame_id = world_frame_;
+    mesh_pub_.publish(mesh_msg);
   }
   ros::spinOnce();
+}
+
+void SimulationServer::moveToPoint(geometry_msgs::PointStamped clicked_point_msg) {
+  geometry_msgs::Point p = clicked_point_msg.point;
+
+  // Update parameters from here
+  // world_->setCuboidParameters(5, Point(-2.0, 0.0, 2.0), Point(-1.0, 0.0, 0.0), 5.0/*breadth*/, 0.3/*width*/);
+  voxblox::Object* obj = world_->getObjectById(5);
+  obj->setParameters(Point(p.x, p.y, 2.0), Point(-1.0, 0.0, 0.0), 5.0/*breadth*/, 0.3/*width*/);
+  world_->generateSdfFromWorld(truncation_distance_, tsdf_gt_.get());
+  world_->generateSdfFromWorld(esdf_max_distance_, esdf_gt_.get());
+
+  visualize();
+}
+
+void SimulationServer::frameCloudCallback(sensor_msgs::PointCloud frame_cloud_msg) {
+  // Loop through all frames (set of 4 points)
+  for (unsigned int i = 0; i < frame_cloud_msg.points.size(); i+=4) {
+    int p_id = frame_cloud_msg.channels[0].values[i];
+
+    // Compute plane segment parameters center, normal, breadth and width
+    geometry_msgs::Point32 bl_pt = frame_cloud_msg.points[i];
+    geometry_msgs::Point32 tl_pt = frame_cloud_msg.points[i+1];
+    geometry_msgs::Point32 tr_pt = frame_cloud_msg.points[i+2];
+    geometry_msgs::Point32 br_pt = frame_cloud_msg.points[i+3];
+
+    Point bl(bl_pt.x, bl_pt.y, bl_pt.z);
+    Point tl(tl_pt.x, tl_pt.y, tl_pt.z);
+    Point tr(tr_pt.x, tr_pt.y, tr_pt.z);
+    Point br(br_pt.x, br_pt.y, br_pt.z);
+
+    FloatingPoint breadth = (br-bl).norm();
+    Point center = (bl+tl+tr+br)/4.0;
+    Point normal = ((tl-bl).normalized().cross((br-bl).normalized())).normalized();
+
+    voxblox::Object* obj = world_->getObjectById(p_id);
+    // If plane id already exists, update params
+    if (obj != nullptr) {
+      obj->setParameters(center, normal, breadth/*breadth*/, 2/*width*/);
+    } else { // otherwise, add a plane segment      
+      world_->addObject(std::unique_ptr<Object>(
+          new CuboidObject(center, normal, breadth/*breadth*/, 2/*width*/, Color::Gray(), p_id)));
+    }
+  }
+
+  // Update mesh visualization
+  world_->generateSdfFromWorld(truncation_distance_, tsdf_gt_.get());
+  world_->generateSdfFromWorld(esdf_max_distance_, esdf_gt_.get());
+  visualize();
 }
 
 void SimulationServer::run() {

@@ -92,6 +92,23 @@ class SimulationWorld {
   Point getMinBound() const { return min_bound_; }
   Point getMaxBound() const { return max_bound_; }
 
+  Object* getObjectById(int id) {
+    for (const std::unique_ptr<Object>& object : objects_) {
+      if ((object->getId() == id) && (object->getType() == Object::Type::kCuboid))
+        return object.get();
+    }
+
+    return nullptr;
+  }
+
+  void setCuboidParameters(int id, Point center, Point normal, FloatingPoint breadth, FloatingPoint width) {
+    for (const std::unique_ptr<Object>& object : objects_) {
+      if ((object->getId() == id) && (object->getType() == Object::Type::kCuboid))
+        object->setParameters(center, normal, breadth, width);
+        break;
+    }
+  }
+
  protected:
   template <typename VoxelType>
   void setVoxel(FloatingPoint dist, const Color& color, VoxelType* voxel) const;

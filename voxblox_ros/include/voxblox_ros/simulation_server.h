@@ -5,6 +5,8 @@
 #include <string>
 
 #include <ros/ros.h>
+#include <geometry_msgs/PointStamped.h>
+#include <sensor_msgs/PointCloud.h>
 
 #include <voxblox/core/esdf_map.h>
 #include <voxblox/core/tsdf_map.h>
@@ -57,6 +59,9 @@ class SimulationServer {
   bool generatePlausibleViewpoint(FloatingPoint min_distance, Point* ray_origin,
                                   Point* ray_direction) const;
 
+  void moveToPoint(geometry_msgs::PointStamped clicked_point_msg);
+  void frameCloudCallback(sensor_msgs::PointCloud frame_cloud_msg);
+
   ros::NodeHandle nh_;
   ros::NodeHandle nh_private_;
 
@@ -69,6 +74,11 @@ class SimulationServer {
   ros::Publisher esdf_test_pub_;
   ros::Publisher tsdf_test_mesh_pub_;
   ros::Publisher view_ptcloud_pub_;
+
+  ros::Publisher mesh_pub_;
+
+  ros::Subscriber clicked_point_sub_;
+  ros::Subscriber frame_sub_;
 
   // Settings
   FloatingPoint voxel_size_;

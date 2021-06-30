@@ -21,12 +21,14 @@ class Object {
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
   // A wall is an infinite plane.
-  enum Type { kSphere = 0, kCube, kPlane, kCylinder };
+  enum Type { kSphere = 0, kCube, kPlane, kCylinder, kCuboid };
 
   Object(const Point& center, Type type)
-      : Object(center, type, Color::White()) {}
+      : Object(center, type, Color::White(), 0/*id*/) {}
   Object(const Point& center, Type type, const Color& color)
-      : center_(center), type_(type), color_(color) {}
+      : Object(center, type, color, 0/*id*/) {}
+  Object(const Point& center, Type type, const Color& color, int id)
+      : center_(center), type_(type), color_(color), id_(id) {}
   virtual ~Object() {}
 
   /// Map-building accessors.
@@ -34,6 +36,7 @@ class Object {
 
   Color getColor() const { return color_; }
   Type getType() const { return type_; }
+  int getId() const { return id_; }
 
   /// Raycasting accessors.
   virtual bool getRayIntersection(const Point& ray_origin,
@@ -42,10 +45,13 @@ class Object {
                                   Point* intersect_point,
                                   FloatingPoint* intersect_dist) const = 0;
 
+  virtual void setParameters(Point center, Point normal, FloatingPoint breadth, FloatingPoint width) = 0;
+
  protected:
   Point center_;
   Type type_;
   Color color_;
+  int id_;
 };
 
 class Sphere : public Object {
@@ -96,6 +102,8 @@ class Sphere : public Object {
     *intersect_dist = d;
     return true;
   }
+
+  virtual void setParameters(Point center, Point normal, FloatingPoint breadth, FloatingPoint width) {}
 
  protected:
   FloatingPoint radius_;
@@ -200,6 +208,7 @@ class Cube : public Object {
     return true;
   }
 
+  virtual void setParameters(Point center, Point normal, FloatingPoint breadth, FloatingPoint width) {}
  protected:
   Point size_;
 };
@@ -252,8 +261,93 @@ class PlaneObject : public Object {
     return true;
   }
 
+  virtual void setParameters(Point center, Point normal, FloatingPoint breadth, FloatingPoint width) {}
+
  protected:
   Point normal_;
+};
+
+// Assumed that the normal is horizontal
+class CuboidObject : public Object {
+ public:
+  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+
+  CuboidObject(const Point& center, const Point& normal, const FloatingPoint& breadth, const FloatingPoint& width)
+      : Object(center, Type::kCuboid), normal_(normal), breadth_(breadth), width_(width) {
+        setIsometryFromNormal();
+      }
+  CuboidObject(const Point& center, const Point& normal, const FloatingPoint& breadth, const FloatingPoint& width, const Color& color)
+      : Object(center, Type::kCuboid, color), normal_(normal), breadth_(breadth), width_(width) {
+        setIsometryFromNormal();
+      }
+  CuboidObject(const Point& center, const Point& normal, const FloatingPoint& breadth, const FloatingPoint& width, const Color& color, const int id)
+      : Object(center, Type::kCuboid, color, id), normal_(normal), breadth_(breadth), width_(width) {
+        setIsometryFromNormal();
+      }
+
+  void setIsometryFromNormal()
+  {
+    Point normal;
+    normal << normal_.x(), normal_.y(), normal_.z();
+    normal.normalize();
+
+    Point x_axis;
+    x_axis << 1.0, 0.0, 0.0;
+
+    // Compute the rotation of x-axis w.r.t normal
+    FloatingPoint cos_theta = x_axis.dot(normal);
+    FloatingPoint sin_theta = std::sqrt((FloatingPoint)1.0 - cos_theta * cos_theta);
+
+    iso_box2world_.translation() = center_;
+    iso_box2world_.linear() <<
+      cos_theta, -sin_theta, 0.0,
+      sin_theta, cos_theta, 0.0,
+      0.0, 0.0, 1.0; 
+  }
+
+  virtual FloatingPoint getDistanceToPoint(const Point& point) const {
+    // TODO: Add "SDF of a box" youtube link
+
+    Point p;
+    p << point.x(), point.y(), point.z();
+
+    p = iso_box2world_.inverse() * point;
+
+    Point R;
+    R.x() = width_/2.0;
+    R.y() = breadth_/2.0;
+    R.z() = center_.z();
+
+    Point q = p.cwiseAbs() - R;
+
+    FloatingPoint distance = q.cwiseMax(0.0).norm() + std::min(q.maxCoeff(), (FloatingPoint)0.0);
+
+    return distance;
+  }
+
+  virtual bool getRayIntersection(const Point& ray_origin,
+                                  const Point& ray_direction,
+                                  FloatingPoint max_dist,
+                                  Point* intersect_point,
+                                  FloatingPoint* intersect_dist) const {
+    return false;
+  }
+
+  virtual void setParameters(Point center, Point normal, FloatingPoint breadth, FloatingPoint width) {
+    center_ = center;
+    normal_ = normal;
+    breadth_ = breadth;
+    width_ = width;
+
+    setIsometryFromNormal();
+  }
+
+ protected:
+  FloatingPoint breadth_;
+  FloatingPoint width_;
+  Point normal_;
+
+  Eigen::Transform<FloatingPoint, 3, Eigen::Isometry> iso_box2world_;
 };
 
 class Cylinder : public Object {
@@ -393,6 +487,8 @@ class Cylinder : public Object {
     *intersect_dist = t;
     return true;
   }
+
+  virtual void setParameters(Point center, Point normal, FloatingPoint breadth, FloatingPoint width) {}
 
  protected:
   FloatingPoint radius_;
